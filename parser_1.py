@@ -30,6 +30,10 @@ P = "{http://www.iec.ch/61850/2003/SCL}P"
 
 GSECONTROL = "{http://www.iec.ch/61850/2003/SCL}GSEControl"
 FCDA = "{http://www.iec.ch/61850/2003/SCL}FCDA"
+
+INPUTS = "{http://www.iec.ch/61850/2003/SCL}Inputs"
+EXTREF = "{http://www.iec.ch/61850/2003/SCL}ExtRef"
+
 class Goose():
     def __init__(self):
         self.goose_out_param ={} # {0: '1', 1: '010CCD010014', 2: '4', 3: '3', 4: '3114', 5: 'QC1G_F6_A2_PA', 6: '1', 7: '2.4', 8: '0'}
@@ -49,7 +53,7 @@ class Terminal():
     def __init__(self):
         self.communication = {}
         self.goose_out = {}
-        self.goose_in = {}
+        self.goose_in = []
         self.subscribers = {} # {1: [('QC1G_A1_DD', 5), .... 7: [], 8: [], 9: []}
         self.errors = []
         self.signal_names = {} # {214: 'Готовность LAN1', 215: 'Готовность LAN2'...}
@@ -91,6 +95,9 @@ def print_terminal(t: Terminal):
             print("\t", kk, vv)
         for d in v.goose_out_data:
             print("\t", d)
+    print("подписки")
+    for goose_in in t.goose_in:
+        print("\t", goose_in)
 
 def make_terminal_siemens(file_name: str):
     terminal = Terminal()
@@ -112,14 +119,16 @@ def make_terminal_siemens(file_name: str):
         if sub_net.find(f"{CONNECTEDAP}[@iedName='{header_id}']/{GSE}"):
             terminal.communication["IP_GOOSE"] = ip.text
             print(terminal.communication["IP_GOOSE"])
-    # получаем часть инфы об исх гусях
+    # бежим по исходящим гусям терминала
     for gse in root.findall(f"{COMMUNICATION}/{SUBNETWORK}/{CONNECTEDAP}[@iedName='{header_id}']/{GSE}"):
         goose = Goose()
+        # набиваем гуся параметрами
         for p in gse.findall(f"{ADDRESS}/{P}"):
             goose.goose_out_param[p.attrib["type"]] = p.text
         ldInst = gse.attrib["ldInst"] # <GSE ldInst="UD1" cbName="Control_DataSet">
         cdName = gse.attrib["cbName"] # <GSE ldInst="UD1" cbName="Control_DataSet">
         datSet = root.find(f"{IED}[@name='{header_id}']/{ACCESSPOINT}/{SERVER}/{LDEVICE}[@inst='{ldInst}']/{LN0}/{GSECONTROL}[@name='{cdName}']").attrib["datSet"] # <GSEControl datSet="DataSet" confRev="20001" type="GOOSE" appID="1_W6_PA_S1_21A_QT" name="Control_DataSet">
+        # набиваем гуся датасетами
         for fcda in root.findall(f"{IED}[@name='{header_id}']/{ACCESSPOINT}/{SERVER}/{LDEVICE}[@inst='{ldInst}']/{LN0}/{DATASET}[@name='{datSet}']/{FCDA}"):
             ldInst = fcda.attrib["ldInst"]
             prefix = fcda.attrib["prefix"]
@@ -137,16 +146,23 @@ def make_terminal_siemens(file_name: str):
                                         "fc": fcda.attrib["fc"],
                                         "ln": ln,
                                         "doi": doi})
+        # добовляем исходящего гуся в терминал, ключ пара inst логического устройства и имя датасета
         terminal.goose_out[(ldInst, cdName)] = goose
-    
-    # # след 4 строчки для тестов, можно удалить
-    # for k, v in terminal.goose_out.items():
-    #     print(k)
-    #     for kk, vv in v.goose_out_param.items():
-    #         print("\t", kk, vv)
-    #     for d in v.goose_out_data:
-    #         print("\t", d)
-    
+    # пробегаем по подпискам
+    #print("!!!!!!!!!!!!!!!!")
+    for inputs in root.findall(f".//{INPUTS}/{EXTREF}[@serviceType='GOOSE']"):
+        #print(inputs.attrib["desc"])
+        terminal.goose_in.append({"ldInst": inputs.attrib["ldInst"],
+                                #"prefix": inputs.attrib["prefix"], 
+                                "lnClass": inputs.attrib["lnClass"], 
+                                "lnInst": inputs.attrib["lnInst"], 
+                                "doName": inputs.attrib["doName"], 
+                                "daName": inputs.attrib["daName"], 
+                                #"fc": inputs.attrib["fc"],   
+                                "iedName": inputs.attrib["iedName"],
+                                "desc": inputs.attrib["desc"]})
+        
+
     print_terminal(terminal)
     
     # for private in root.findall(f"{IED}/{PRIVATE}"): # пробегаю по параметрам исходящего GOOSE
