@@ -1,4 +1,5 @@
-import xml.etree.ElementTree as ET
+#import xml.etree.ElementTree as ET
+import lxml.etree as ET
 from zipfile import ZipFile
 import socket
 import struct
@@ -74,18 +75,18 @@ def whose_cid(cid: str):
         return "Не удалось открыть"
     print("Определяем чей cid ",cid)
     root = tree.getroot()
-    for header in root.findall(f"{HEADER}"):        
-        if ("id", "")  in header.attrib.items():
-            for ied_2 in root.findall(f"{IED}"):
-                if ("manufacturer", "EKRA")  in ied_2.attrib.items():
-                    print("This is EKRA")
-                    return "EKRA"
-        else:
-            for ied_3 in root.findall(f"{IED}"):
-                if ied_3.attrib["name"] == header.attrib["id"] and ied_3.attrib["manufacturer"] == "SIEMENS":
-                    print("This is SIEMENS-5")
-                    return "SIEMENS-5"
-    return "Неизвестное устройство"
+    print(root.nsmap)
+    try:
+        manufacturer = root.find(f"{IED}").attrib["manufacturer"] == "EKRA"
+    except:
+        print("Неизвестное устройство")
+        return "Неизвестное устройство"
+    if manufacturer:
+        print("This is EKRA")
+        return "EKRA"
+    else:
+        print("IEC61850_TERMINAL")
+        return "IEC61850_TERMINAL"
 
 def print_terminal(t: Terminal):
     print("IP_GOOSE", t.communication["IP_GOOSE"])
@@ -107,12 +108,13 @@ def make_terminal_siemens(file_name: str):
     root = tree.getroot()
     is_goose = False
     is_ekra = False
-    header_id = root.find(f"{HEADER}").attrib["id"]
-    ied = root.find(f"{IED}[@name='{header_id}']")
+    #header_id = root.find(f"{HEADER}").attrib["id"]
+    ied = root.find(f"{IED}")
+    header_id = ied.attrib["name"]
     for k, v in ied.items():
         terminal.ied[k] = v
-    if terminal.ied["manufacturer"] != "SIEMENS":
-        return None
+    # if terminal.ied["manufacturer"] != "SIEMENS":
+    #     return None
     # получаем ip терминала
     for sub_net in root.findall(f"{COMMUNICATION}/{SUBNETWORK}"):
         ip = sub_net.find(f"{CONNECTEDAP}[@iedName='{header_id}']/{ADDRESS}/{P}[@type='IP']")
@@ -149,20 +151,47 @@ def make_terminal_siemens(file_name: str):
         # добовляем исходящего гуся в терминал, ключ пара inst логического устройства и имя датасета
         terminal.goose_out[(ldInst, cdName)] = goose
     # пробегаем по подпискам
-    #print("!!!!!!!!!!!!!!!!")
-    for inputs in root.findall(f".//{INPUTS}/{EXTREF}[@serviceType='GOOSE']"):
-        #print(inputs.attrib["desc"])
-        terminal.goose_in.append({"ldInst": inputs.attrib["ldInst"],
-                                #"prefix": inputs.attrib["prefix"], 
-                                "lnClass": inputs.attrib["lnClass"], 
-                                "lnInst": inputs.attrib["lnInst"], 
-                                "doName": inputs.attrib["doName"], 
-                                "daName": inputs.attrib["daName"], 
-                                #"fc": inputs.attrib["fc"],   
-                                "iedName": inputs.attrib["iedName"],
-                                "desc": inputs.attrib["desc"]})
-        
-
+    #first_ied = root.find()
+    if "sip4" in root.nsmap:
+        p = ied.findall(f".//{INPUTS}/{EXTREF}") # если сипротек 4
+    else:
+        p = ied.findall(f".//{INPUTS}/{EXTREF}[@serviceType='GOOSE']") # любой другой терминал
+    for inputs in p:
+        subs = {}
+        subs["iedName"] = inputs.attrib["iedName"]
+        subs["ldInst"] = inputs.attrib["ldInst"]
+        # if inputs.hasAttribute("prefix"):
+        #     subs["prefix"] = inputs.attrib["prefix"]
+        # else:
+        #     subs["prefix"] = ""
+        subs["prefix"] = inputs.get("lnClass")
+        subs["lnClass"] = inputs.attrib["lnClass"]
+        subs["lnInst"] = inputs.attrib["lnInst"]
+        subs["doName"] = inputs.attrib["doName"]
+        subs["daName"] = inputs.attrib["daName"]
+        subs["intAddr"] = inputs.attrib["intAddr"]
+        terminal.goose_in.append(subs)
+        # terminal.goose_in.append({"ldInst": inputs.attrib["ldInst"],
+        #                         "prefix": inputs.attrib["prefix"], 
+        #                         "lnClass": inputs.attrib["lnClass"], 
+        #                         "lnInst": inputs.attrib["lnInst"], 
+        #                         "doName": inputs.attrib["doName"], 
+        #                         "daName": inputs.attrib["daName"], 
+        #                         #"fc": inputs.attrib["fc"],   
+        #                         "iedName": inputs.attrib["iedName"]
+        #                         # "desc": inputs.attrib["desc"]
+        #                                                 })
+    # else:
+    #     for inputs in root.findall(f".//{INPUTS}/{EXTREF}[@serviceType='GOOSE']"):
+    #         terminal.goose_in.append({"ldInst": inputs.attrib["ldInst"],
+    #                                 "prefix": inputs.attrib["prefix"], 
+    #                                 "lnClass": inputs.attrib["lnClass"], 
+    #                                 "lnInst": inputs.attrib["lnInst"], 
+    #                                 "doName": inputs.attrib["doName"], 
+    #                                 "daName": inputs.attrib["daName"], 
+    #                                 #"fc": inputs.attrib["fc"],   
+    #                                 "iedName": inputs.attrib["iedName"],
+    #                                 "desc": inputs.attrib["desc"]})
     print_terminal(terminal)
     
     # for private in root.findall(f"{IED}/{PRIVATE}"): # пробегаю по параметрам исходящего GOOSE
@@ -218,7 +247,8 @@ def make_substation(cids: str):
                 # ter = make_terminal_ekra(cids.removesuffix(".zip") + "/" + file)
                 # if ter:
                 #     substation.append(ter) # добовляю терминал в подстанцию
-            elif manufacturer == "SIEMENS-5":
+            #elif manufacturer == "SIEMENS-5":
+            elif manufacturer == "IEC61850_TERMINAL":
                 ter = make_terminal_siemens(cids.removesuffix(".zip") + "/" + file)
                 if ter:
                     substation.append(ter) # добовляю терминал в подстанцию
