@@ -83,13 +83,16 @@ def whose_cid(cid: str):
         return "Неизвестное устройство"
     if manufacturer:
         print("This is EKRA")
+        return "IEC61850_TERMINAL"
         return "EKRA"
+
     else:
         print("IEC61850_TERMINAL")
         return "IEC61850_TERMINAL"
 
 def print_terminal(t: Terminal):
     print("IP_GOOSE", t.communication["IP_GOOSE"])
+    print("iedName", t.communication["iedName"])
     for k, v in t.goose_out.items():
         print(k)
         for kk, vv in v.goose_out_param.items():
@@ -111,6 +114,7 @@ def make_terminal_siemens(file_name: str):
     #header_id = root.find(f"{HEADER}").attrib["id"]
     ied = root.find(f"{IED}")
     header_id = ied.attrib["name"]
+    terminal.communication["iedName"] = ied.attrib["name"]
     for k, v in ied.items():
         terminal.ied[k] = v
     # if terminal.ied["manufacturer"] != "SIEMENS":
@@ -137,8 +141,11 @@ def make_terminal_siemens(file_name: str):
             lnClass = fcda.attrib["lnClass"]
             inst = fcda.attrib["lnInst"]
             doName = fcda.attrib["doName"]
-            ln = root.find(f"{IED}[@name='{header_id}']/{ACCESSPOINT}/{SERVER}/{LDEVICE}[@inst='{ldInst}']/{LN}[@prefix='{prefix}'][@lnClass='{lnClass}'][@inst='{inst}']").attrib["desc"]
-            doi = root.find(f"{IED}[@name='{header_id}']/{ACCESSPOINT}/{SERVER}/{LDEVICE}[@inst='{ldInst}']/{LN}[@prefix='{prefix}'][@lnClass='{lnClass}'][@inst='{inst}']/{DOI}[@name='{doName}']").attrib["desc"]
+            ln = root.find(f"{IED}[@name='{header_id}']/{ACCESSPOINT}/{SERVER}/{LDEVICE}[@inst='{ldInst}']/{LN}[@prefix='{prefix}'][@lnClass='{lnClass}'][@inst='{inst}']").get("desc") # у ЭКРЫ тут тен атрибута desc
+            doi = root.find(f"{IED}[@name='{header_id}']/{ACCESSPOINT}/{SERVER}/{LDEVICE}[@inst='{ldInst}']/{LN}[@prefix='{prefix}'][@lnClass='{lnClass}'][@inst='{inst}']/{DOI}[@name='{doName}']").get("desc")
+            if not doi: # У ЭКРЫ глубже название сигнала
+                doi = root.find(f"{IED}[@name='{header_id}']/{ACCESSPOINT}/{SERVER}/{LDEVICE}[@inst='{ldInst}']/{LN}[@prefix='{prefix}'][@lnClass='{lnClass}'][@inst='{inst}']/{DOI}[@name='{doName}']/{DAI}").get("desc")
+
             goose.goose_out_data.append({"ldInst": fcda.attrib["ldInst"], 
                                         "prefix": fcda.attrib["prefix"], 
                                         "lnClass": fcda.attrib["lnClass"], 
@@ -158,18 +165,35 @@ def make_terminal_siemens(file_name: str):
         p = ied.findall(f".//{INPUTS}/{EXTREF}[@serviceType='GOOSE']") # любой другой терминал
     for inputs in p:
         subs = {}
-        subs["iedName"] = inputs.attrib["iedName"]
+        subs["iedName"] = inputs.get("iedName")
+        if not subs["iedName"]:
+            #subs["iedName"] = terminal.communication["iedName"] # У Экры в Inputs нет iedName, но его мы уже знаем, просто забираем из нашей структуры
+            continue # У ЭКРЫ прописаны пусте исходящие гуси
         subs["ldInst"] = inputs.attrib["ldInst"]
-        # if inputs.hasAttribute("prefix"):
-        #     subs["prefix"] = inputs.attrib["prefix"]
-        # else:
-        #     subs["prefix"] = ""
-        subs["prefix"] = inputs.get("lnClass")
+        subs["prefix"] = inputs.get("prefix")
         subs["lnClass"] = inputs.attrib["lnClass"]
         subs["lnInst"] = inputs.attrib["lnInst"]
         subs["doName"] = inputs.attrib["doName"]
         subs["daName"] = inputs.attrib["daName"]
-        subs["intAddr"] = inputs.attrib["intAddr"]
+        subs["desc"] = inputs.get("desc") # в 4м сипротеке деска не будет. Поэтому идем по ифу ниже
+        if not subs["desc"]:         
+            if inputs.get("intAddr"):
+                xxx = inputs.get("intAddr").split('/')[-2]
+                # print(inputs.getparent().getparent().find(f"{DOI}[@name='{intAddr}']"))
+                subs["desc"] = inputs.getparent().getparent().find(f"{DOI}[@name='{xxx}']").attrib["desc"]
+        if ied.get("manufacturer") == "EKRA":
+            # print(inputs.getparent().getparent().getparent().attrib)
+            #subs["desc"] = inputs.getparent().getparent().find(f"{DOI}[@name='{xxx}']").attrib["desc"]
+            xxx = inputs.get("intAddr").split('.')
+            for doi_ in inputs.getparent().getparent().getparent():
+                # print(doi_.attrib)
+                if "" + doi_.get("prefix", "") + doi_.get("lnClass", "") + doi_.get("inst", "") == xxx[0]:
+                    # print("2")
+                    # print(doi_.find(f"{DOI}[@name='{xxx[1]}']/{DAI}").attrib["desc"])
+                    subs["desc"] = doi_.find(f"{DOI}[@name='{xxx[1]}']/{DAI}").attrib["desc"]
+        # n = 
+        # print(inputs.getparent().getparent().find(f"{}[]"))
+
         terminal.goose_in.append(subs)
         # terminal.goose_in.append({"ldInst": inputs.attrib["ldInst"],
         #                         "prefix": inputs.attrib["prefix"], 
