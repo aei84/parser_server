@@ -37,6 +37,9 @@ FCDA = "{http://www.iec.ch/61850/2003/SCL}FCDA"
 INPUTS = "{http://www.iec.ch/61850/2003/SCL}Inputs"
 EXTREF = "{http://www.iec.ch/61850/2003/SCL}ExtRef"
 
+CIPA = "{http://www.iec.ch/61850/2003/SCL}CIPA"
+
+
 
 class Report_cipa():
     def __init__(self):
@@ -293,36 +296,64 @@ def make_substation(cids: Path):
                 tree = ET.parse(cids.parent/file)
                 print("\n Читаем ",file)
                 root = tree.getroot()
-                ied_name = root.find(IED).attrib["name"] # получаю IED вайла с которым работаю
+                ied_name = root.find(IED).attrib["name"] # получаю IED файла с которым работаю
                 # на этом месте нужно описась входящие и исходящие сигналы
                 substation[ied_name] = tree
             else:
                 print("\n !!!!!!!!Пропускаем ", file)
-    
+    test1 = 0
+    new_substation = substation.copy()
+
     for ied_name, tree in substation.items():
+        test2 = 0
+        test1 += 1
         root = tree.getroot()
-        #for extref in root.findall(f".//{IED}[@name='{ied_name}'//{INPUTS}/{EXTREF}"):
-        report_cipa.ok_term.add(ied_name)
-        for extref in root.findall(f".//{INPUTS}/{EXTREF}"):
-            source_ied_name = extref.get("iedName")
-            if source_ied_name in substation:
-                print("нашли", source_ied_name)
-                
-                pass
+        # print(type(tree))
+        # print(type(root))
+        report_cipa.ok_term.add(ied_name) # отправили в отчет, что этот терминал обработан VV_T1
+        for extref in root.findall(f".//{IED}[@name='{ied_name}']//{INPUTS}/{EXTREF}"): # бежим по всем входящим нашего терминала
+            
+            test2 += 1
+            source_ied_name = extref.get("iedName") # выдергиваем ИЕД на который он подписан VV_T2
+            if source_ied_name in substation: # если терминал с этим ИЕДом у нас есть, заходим в него и говорим что подписаны на него
+                root_source = substation[source_ied_name].getroot() # заходим в корень терминала на котрый подписаны
+                doName = extref.attrib["doName"] # "SPCSO40"
+                print(test1, test2, doName)
+                cipa_name_signal = root_source.find(f".//{IED}[@name='{source_ied_name}']//{LDEVICE}[@inst='{extref.get('ldInst')}']/{LN}[@prefix='{extref.get('prefix')}'][@lnClass='{extref.get('lnClass')}'][@inst='{extref.get('lnInst')}']/{DOI}[@name='{doName}']") # нахожу узел на который подписан [@doName='{doName}']
+                print(test1, test2, cipa_name_signal.attrib)
+                cipa = ET.Element(CIPA)
+                cipa.attrib["IED"] = ied_name
+                cipa.attrib["name"] = cipa_name_signal.get("name")
+                desc_in_DOI = cipa_name_signal.get("desc")
+                if desc_in_DOI:
+                    cipa.attrib["desc"] = desc_in_DOI
+                else:
+                    try:
+                        desc_in_DAI = cipa_name_signal.find(DAI).get("desc")
+                        cipa.attrib["desc"] = desc_in_DAI
+                    except:
+                        cipa.attrib["desc"] = f"!!!!!!!!!!!!{source_ied_name}"
+                    # if desc_in_DAI:
+                    #     cipa.attrib["desc"] = desc_in_DAI
+                    # else:
+                    #     cipa.attrib["desc"] = f"!!!!!!!!!!!!{source_ied_name}"
+                print(test1, test2, cipa.attrib)
+                cipa_signal = root_source.find(f".//{IED}[@name='{source_ied_name}']//{FCDA}[@ldInst='{extref.get('ldInst')}'][@prefix='{extref.get('prefix')}'][@lnClass='{extref.get('lnClass')}'][@lnInst='{extref.get('lnInst')}'][@doName='{extref.get('doName')}'][@daName='{extref.get('daName')}']")
+                cipa_signal.append(cipa)                
             else:
-                #print("НЕ нашли", source_ied_name)
+                print("НЕ нашли", source_ied_name)
                 report_cipa.err.add(source_ied_name)
     
-    print(len(report_cipa.err))
-    for i in report_cipa.err:
-        print(i)
-    print()
-    print(len(report_cipa.ok_term))
-    for i in report_cipa.ok_term:
-        print(i)
+    # print(len(report_cipa.err))
+    # for i in report_cipa.err:
+    #     print(i)
+    # print()
+    # print(len(report_cipa.ok_term))
+    # for i in report_cipa.ok_term:
+    #     print(i)
     with ZipFile(cids.parent/"cipa.zip", mode='w') as zip_file:
         for k, v in substation.items():
-            v.write(cids.parent/("c_" + k))
+            v.write(cids.parent/("c_" + k), encoding="UTF-8")
             zip_file.write(cids.parent/("c_" + k), (k + ".cid"))
         report_cipa.make_report(cids.parent)
         zip_file.write(cids.parent/("report_cipa.txt"), ("report_cipa.txt"))
