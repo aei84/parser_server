@@ -9,7 +9,9 @@ from pathlib import *
 import shutil
 
 import openpyxl
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill, Border, Side
+
+from copy import copy
 
 IED = "{http://www.iec.ch/61850/2003/SCL}IED"
 PRIVATE = "{http://www.iec.ch/61850/2003/SCL}Private"
@@ -39,7 +41,8 @@ EXTREF = "{http://www.iec.ch/61850/2003/SCL}ExtRef"
 
 CIPA = "{http://www.iec.ch/61850/2003/SCL}CIPA"
 
-
+HORIZ = 3 # координаты начала заполнения EXCEL
+VERT = 3 # координаты начала заполнения EXCEL
 
 class Report_cipa():
     def __init__(self):
@@ -56,8 +59,8 @@ class Report_cipa():
             for i in self.ok_term:
                 file.write("\t" + i + "\n")
 
-
 def whose_cid(cid: str):
+    print("whose_cid")
     #print("\n!!!", cid)
     try:
         tree = ET.parse(cid)
@@ -87,7 +90,6 @@ def whose_cid(cid: str):
         return "IEC61850_TERMINAL"
 
 
-def make_terminal(file_name: str):
     tree = ET.parse(file_name)
     print("\n Читаем ",file_name)
     root = tree.getroot()
@@ -283,7 +285,202 @@ def make_terminal(file_name: str):
     #     return None
     return ied
 
+def make_xl(cids, path):
+    print("make_xl")
+    #print(substation[0].signal_names)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    horiz = HORIZ + 1 # первый столбец для заполнения горизонтали терминалов
+    vert = VERT + 1 # первая строка для заполнения вертикали терминалов
+    for t in cids:
+        print("t =", t)
+        terminal = ET.parse(path.parent/f"{t}.cid").getroot()
+
+        #print("заполняем  xl", t.goose_out_param[5])
+        ws.cell(VERT, horiz).value = t
+        ws.cell(VERT, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
+        #ws.cell(VERT - 2, horiz).value = t.communication["IP"] 
+        #ws.cell(VERT - 2, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
+        letter = ws.cell(VERT, horiz).column_letter # получаем букву текущей ячейки чтобы изменить ее ширину
+        ws.column_dimensions[letter].width = 3 # меняем ширину текущего столбца
+        horiz += 1
+        start_group = ws.cell(VERT, horiz).column_letter # получаем букву текущей для группировки ячеек
+        end_group = None # если у терминала не будет входящих гусей, то конец гусей не определиться и колонки не будут группироваться
+        for extref in terminal.findall(f".//{IED}[@name='{t}']//{INPUTS}/{EXTREF}"): # бежим по всем входящим нашего терминала
+        #for ind, goose in terminal.findall()
+            ied_name = extref.get("iedName") # если iedName нет, значит гусь не используется, пропускаем
+            if ied_name == None:
+                continue
+            serviceType = extref.get("serviceType") # если serviceType "SMV" (SV-поток), пропускаем
+            if serviceType == "SMV":
+                continue
+
+            ws.cell(VERT-2, horiz).value = t #f"{extref.attrib['iedName']}"
+            ws.cell(VERT-2, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
+            
+            ws.cell(VERT-1, horiz).value = f"{extref.attrib['iedName']}/{extref.attrib['ldInst']}/{extref.attrib['prefix']}{extref.attrib['lnClass']}{extref.attrib['lnInst']}/{extref.attrib['doName']}/{extref.attrib['daName']}"
+            ws.cell(VERT-1, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
+            ws.cell(VERT, horiz).value = f"{extref.attrib['intAddr']}"
+            ws.cell(VERT, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
+            letter = ws.cell(VERT, horiz).column_letter # получаем букву текущей ячейки чтобы изменить ее ширину
+            ws.column_dimensions[letter].width = 3 # меняем ширину текущего столбца
+            end_group = ws.cell(VERT, horiz).column_letter
+            horiz += 1
+        if end_group:
+            ws.column_dimensions.group(start_group, end_group, hidden=True)
+        ws.cell(vert, HORIZ).value = t
+        #ws.cell(vert, HORIZ - 2).value = t.communication["IP"] 
+        vert += 1
+        start_group = vert
+        end_group = None
+        for gse in terminal.findall(f".//{COMMUNICATION}//{CONNECTEDAP}[@iedName='{t}']/{GSE}"): # прохожу по всем исходящим гусям
+            cbName = gse.get("cbName") # получаю cbName чтобы потом найти нужный datSet
+            ldInst = gse.get("ldInst") # получаю ldInst чтобы потом найти нужный datSet
+            print("cbName =", cbName)
+            datSet = terminal.find(f".//{IED}[@name='{t}']//{ACCESSPOINT}//{SERVER}//{LDEVICE}[@inst='{ldInst}']/{LN0}/{GSECONTROL}[@name='{cbName}']").get("datSet") # получил имя DataSet с набором данных гуся
+            print("datSet =", datSet)
+            for fcda in terminal.findall(f".//{IED}[@name='{t}']/{ACCESSPOINT}/{SERVER}/{LDEVICE}[@inst='{ldInst}']/{LN0}/{DATASET}[@name='{datSet}']/{FCDA}"): # бегу по исходящим сигналам гуся
+                print(fcda.attrib)
+                
+                ws.cell(vert, HORIZ-2).value = t
+                prefix = fcda.get("prefix", "")
+                lnInst = fcda.get("lnInst", "")
+                ws.cell(vert, HORIZ-1).value = f"{t}/{fcda.attrib['ldInst']}/{prefix}{fcda.attrib['lnClass']}{lnInst}/{fcda.attrib['doName']}/{fcda.attrib['daName']}"
+                
+                doName = fcda.attrib["doName"]
+                cipa_name_signal = terminal.find(f".//{IED}[@name='{t}']//{LDEVICE}[@inst='{fcda.get('ldInst')}']/{LN}[@prefix='{fcda.get('prefix')}'][@lnClass='{fcda.get('lnClass')}'][@inst='{fcda.get('lnInst')}']/{DOI}[@name='{doName}']") # нахожу узел на который подписан [@doName='{doName}']
+                #print(test1, test2, cipa_name_signal.attrib)
+                #cipa = ET.Element(CIPA)
+                #cipa.attrib["IED"] = ied_name
+                #cipa.attrib["name"] = cipa_name_signal.get("name")
+                try:
+                    desc_in_DOI = cipa_name_signal.get("desc")
+                except:
+                    desc_in_DOI = "Рухнули на строчке 351"
+                if desc_in_DOI:
+                    ws.cell(vert, HORIZ).value = desc_in_DOI
+                else:
+                    try:
+                        desc_in_DAI = cipa_name_signal.find(DAI).get("desc")
+                        ws.cell(vert, HORIZ).value = desc_in_DAI
+                    except:
+                        ws.cell(vert, HORIZ).value = "Не удалось получить название сигнала"
+                
+                
+                
+                # try:
+                #     ws.cell(vert, HORIZ).value = fcda.find(f"./{CIPA}").attrib["desc"]
+                # except:
+                #     ws.cell(vert, HORIZ).value = 'Проблема в 343  ws.cell(vert, HORIZ).value = fcda.find(f"./CIPA").attrib["desc"]'
+                # ws.cell(vert, HORIZ - 1).value = signal
+                # ws.cell(vert, HORIZ - 2).value = t.signal_names.get(int(signal), "В ЭКРАвских сидах не найти, бери мануал(((")
+                end_group = vert
+                vert += 1
+                
+        # for ind, signal in t.goose_out_data.items():
+        #     ws.cell(vert, HORIZ).value = "ind_" + str(ind)
+        #     ws.cell(vert, HORIZ - 1).value = signal
+        #     ws.cell(vert, HORIZ - 2).value = t.signal_names.get(int(signal), "В ЭКРАвских сидах не найти, бери мануал(((")
+        #     end_group = vert
+        #     vert += 1
+        if end_group:
+            ws.row_dimensions.group(start_group, end_group, hidden=True) 
+    ws.column_dimensions.group('A', ws.cell(VERT, HORIZ - 1).column_letter, hidden=True)
+    ws.row_dimensions.group(1, VERT - 1, hidden=True)
+    ws.column_dimensions[ws.cell(VERT, HORIZ - 2).column_letter].width = 22
+    ws.column_dimensions[ws.cell(VERT, HORIZ - 1).column_letter].width = 5
+    ws.column_dimensions[ws.cell(VERT, HORIZ).column_letter].width = 20
+    ws.row_dimensions[VERT].height = 100
+    ws.row_dimensions[VERT - 2].height = 110
+    ws.freeze_panes = ws.cell(VERT + 1, HORIZ + 1)
+    wb.save(path.parent/"For_Sancho.xlsx")
+    fill_xl(path.parent/"For_Sancho.xlsx")
+    #to_vasiliy_xl(path.parent/"For_Sancho.xlsx", "vas.xlsx")
+
+def fill_xl(file_xl):
+    print("fill_xl")
+    wb = openpyxl.load_workbook(file_xl)
+    ws = wb.active
+    empty_vertical = [True] * (ws.max_row + 1)
+    empty_horizontal = [True] * (ws.max_column + 1)
+    horiz = HORIZ + 1 # первый столбец для заполнения пересечений
+    vert = VERT + 1# первая строка для заполнения пересечений
+    terminal_suppression = {} # ключи - названия терминалов записанные друг за друном, значения - адрес ячейки где терминалы пересекаются    
+    border_color = 'C0C0C0' # Задаем цвет границ    
+    cell_color = 'D3D3D3' # Задаем цвет границ    
+    border_side = Side(style='thin', color=border_color)  # Создаем объект Side с нужным цветом    
+    border = Border(left=border_side, right=border_side, top=border_side, bottom=border_side) # Создаем объект Border с нужными границами
+    for x in range(horiz, ws.max_column + 1):
+        for y in range(vert, ws.max_row + 1):
+            ws.cell(y, x).border = border
+            if ws.cell(y, HORIZ - 1).value == None:
+                ws.cell(y, x).fill = PatternFill('solid', fgColor=cell_color)
+            if ws.cell(VERT - 1, x).value == None:
+                ws.cell(y, x).fill = PatternFill('solid', fgColor=cell_color)
+                if ws.cell(y, HORIZ - 1).value == None:
+                    # ws.cell(y, x).value = 'X'
+                    terminal_suppression[ws.cell(VERT, x).value + ws.cell(y, HORIZ).value] = ws.cell(y, x)
+                    continue
+            if ws.cell(y, HORIZ - 1).value == ws.cell(VERT - 1, x).value:
+                ws.cell(y, x).value = 'x'
+                row = terminal_suppression[ws.cell(VERT - 2, x).value + ws.cell(y, HORIZ - 2).value].row
+                column = terminal_suppression[ws.cell(VERT - 2, x).value + ws.cell(y, HORIZ - 2).value].column
+                #terminal_suppression[ws.cell(VERT - 2, x).value + ws.cell(y, HORIZ - 2).value].value = 'X'
+                ws.cell(row, column).value = 'X'
+                ws.cell(row, x).value = '->'
+                ws.cell(row, x).alignment = openpyxl.styles.Alignment(textRotation=180)
+                ws.cell(y, column).value = '->'
+
+                ws.cell(row, HORIZ).fill = PatternFill('solid', fgColor=cell_color)
+                ws.cell(VERT, column).fill = PatternFill('solid', fgColor=cell_color)
+                
+                continue
+    wb.save(file_xl)
+    #return empty_vertical, empty_horizontal
+
+def paint_xl(file_xl, empty_vertical, empty_horizontal):    
+    print("paint_xl")
+    wb = openpyxl.load_workbook(file_xl)
+    ws = wb.active
+    horiz = HORIZ + 1 # первый столбец для заполнения пересечений
+    vert = VERT + 1# первая строка для заполнения пересечений
+    print("красим входящие, которые не подписаны")
+    for x in range(horiz, ws.max_column + 1):        
+        if empty_horizontal[x]:
+            ws.cell(VERT, x).fill = PatternFill('solid', fgColor="8A3324")
+    print("красим исходящие, на которые подписаны")
+    for y in range(vert, ws.max_row + 1):        
+        if empty_vertical[y]:
+            ws.cell(y, HORIZ).fill = PatternFill('solid', fgColor="8A3324")
+    wb.save(file_xl)
+
+def to_vasiliy_xl (sourсe: Path, dest: Path):
+    print("to_vasiliy_xl")
+    # загружаем файлы
+    source_wb = openpyxl.load_workbook(sourсe) # открываем файл-источник
+    dest_wb = openpyxl.load_workbook(dest) # открываем файл назначения
+    # выбираем листы для работы
+    source_ws = source_wb.active # выбираем активный лист в файле-источнике
+    dest_ws = dest_wb.worksheets[0] # выбираем первый лист в файле назначения
+    # копируем значения и форматирование
+    for row in source_ws.iter_rows(min_row=1, max_row=source_ws.max_row,
+                                    min_col=1, max_col=source_ws.max_column):  # проходимся по всем строкам в листе-источнике
+        for cell in row:  # проходимся по всем ячейкам в текущей строке
+            dest_cell = dest_ws.cell(row=cell.row, column=cell.column)  # выбираем соответствующую ячейку в листе-назначении
+            dest_cell.value = cell.value  # копируем значение ячейки
+            dest_cell.data_type = cell.data_type  # копируем тип данных ячейки
+            if cell.has_style:  # если ячейка имела стиль, копируем его в ячейку-назначение
+                dest_cell.font = copy(cell.font)
+                dest_cell.border = copy(cell.border)
+                dest_cell.fill = copy(cell.fill)
+                dest_cell.number_format = copy(cell.number_format)
+                dest_cell.protection = copy(cell.protection)
+                dest_cell.alignment = copy(cell.alignment)
+    # сохраняем изменения в перезаписывая исходный файл
+    dest_wb.save(sourсe)
+
 def make_substation(cids: Path):
+    print("make_substation")
     my_file_xml = cids.parent/f"{cids.stem}.xml" # прописываю путь и имя копии
     substation = {}
     report_cipa = Report_cipa()
@@ -302,7 +499,7 @@ def make_substation(cids: Path):
             else:
                 print("\n !!!!!!!!Пропускаем ", file)
     test1 = 0
-    new_substation = substation.copy()
+    #new_substation = substation.copy()
 
     for ied_name, tree in substation.items():
         test2 = 0
@@ -344,19 +541,19 @@ def make_substation(cids: Path):
                 print("НЕ нашли", source_ied_name)
                 report_cipa.err.add(source_ied_name)
     
-    # print(len(report_cipa.err))
-    # for i in report_cipa.err:
-    #     print(i)
-    # print()
-    # print(len(report_cipa.ok_term))
-    # for i in report_cipa.ok_term:
-    #     print(i)
+    for k, v in substation.items():
+        v.write(cids.parent/f"{k}.cid", encoding="UTF-8")
+        #zip_file.write(cids.parent/("c_" + k), (k + ".cid"))
+
+    make_xl(substation.keys(), cids)
+
     with ZipFile(cids.parent/"cipa.zip", mode='w') as zip_file:
-        for k, v in substation.items():
-            v.write(cids.parent/("c_" + k), encoding="UTF-8")
-            zip_file.write(cids.parent/("c_" + k), (k + ".cid"))
+        # for k, v in substation.items():
+        #     v.write(cids.parent/("c_" + k), encoding="UTF-8")
+        #     zip_file.write(cids.parent/("c_" + k), (k + ".cid"))
         report_cipa.make_report(cids.parent)
         zip_file.write(cids.parent/("report_cipa.txt"), ("report_cipa.txt"))
+        zip_file.write(cids.parent/"For_Sancho.xlsx", "For_Sancho.xlsx")
 
 
 class SuperSocket():
