@@ -32,6 +32,8 @@ SUBNETWORK = "{http://www.iec.ch/61850/2003/SCL}SubNetwork"
 CONNECTEDAP = "{http://www.iec.ch/61850/2003/SCL}ConnectedAP"
 ADDRESS = "{http://www.iec.ch/61850/2003/SCL}Address"
 GSE = "{http://www.iec.ch/61850/2003/SCL}GSE"
+MINTIME = "{http://www.iec.ch/61850/2003/SCL}MinTime"
+MAXTIME = "{http://www.iec.ch/61850/2003/SCL}MaxTime"
 P = "{http://www.iec.ch/61850/2003/SCL}P"
 
 GSECONTROL = "{http://www.iec.ch/61850/2003/SCL}GSEControl"
@@ -43,9 +45,12 @@ EXTREF = "{http://www.iec.ch/61850/2003/SCL}ExtRef"
 CIPA = "{http://www.iec.ch/61850/2003/SCL}CIPA"
 
 HORIZ = 4 # координаты начала заполнения EXCEL
-VERT = 3 # координаты начала заполнения EXCEL
+VERT = 4 # координаты начала заполнения EXCEL
 HORIZ_IED_NAME = 3
 HORIZ_DATA_SET = 2
+VERT_IED_NAME = 3
+VERT_DATA_SET = 2
+VERT_INDS = 1
 
 class Report_cipa():
     def __init__(self):
@@ -116,9 +121,10 @@ def make_xl(cids, path):
     for t in cids:
         # print("t =", t)
         terminal = ET.parse(path.parent/f"{t}.cid").getroot()
-
+        t_ied = t
+        t_ip = terminal.find(f".//{COMMUNICATION}//{CONNECTEDAP}[@iedName='{t}']/{ADDRESS}/{P}[@type='IP']").text
         #print("заполняем  xl", t.goose_out_param[5])
-        ws.cell(VERT, horiz).value = t
+        ws.cell(VERT, horiz).value = t_ied
         ws.cell(VERT, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
         #ws.cell(VERT - 2, horiz).value = t.communication["IP"] 
         #ws.cell(VERT - 2, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
@@ -136,18 +142,25 @@ def make_xl(cids, path):
             if serviceType == "SMV":
                 continue
 
-            ws.cell(VERT-2, horiz).value = t #f"{extref.attrib['iedName']}"
-            ws.cell(VERT-2, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
+            ws.cell(VERT-VERT_INDS, horiz).value = extref.get("intAddr")
+            ws.cell(VERT-VERT_INDS, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
+
+            ws.cell(VERT-VERT_IED_NAME, horiz).value = t_ied #f"{extref.attrib['iedName']}"
+            ws.cell(VERT-VERT_IED_NAME, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
             prefix_extref = extref.get('prefix', "")
-            ws.cell(VERT-1, horiz).value = f"{extref.attrib['iedName']}/{extref.attrib['ldInst']}/{prefix_extref}{extref.attrib['lnClass']}{extref.attrib['lnInst']}/{extref.attrib['doName']}/{extref.attrib['daName']}"
-            ws.cell(VERT-1, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
+            ws.cell(VERT-VERT_DATA_SET, horiz).value = f"{extref.attrib['iedName']}/{extref.attrib['ldInst']}/{prefix_extref}{extref.attrib['lnClass']}{extref.attrib['lnInst']}/{extref.attrib['doName']}/{extref.attrib['daName']}"
+            ws.cell(VERT-VERT_DATA_SET, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
             ws.cell(VERT, horiz).value = f"{extref.attrib['intAddr']}"
             ied = terminal.find(f".//{IED}")
+            
             if ied.get("manufacturer") == "EKRA":
                 intAddr = extref.attrib['intAddr'].split('.')
                 for ln in terminal.findall(f".//{LDEVICE}/{LN}"):
                     if ln.get("prefix", "") + ln.get("lnClass", "") + ln.get("inst", "") == intAddr[0]:
-                        ws.cell(VERT, horiz).value = ln.find(f".//{DOI}[@name='{intAddr[1]}']/{DAI}").get("desc")
+                        try:
+                            ws.cell(VERT, horiz).value = ln.find(f".//{DOI}[@name='{intAddr[1]}']/{DAI}").get("desc")
+                        except:
+                            print("\ошибка чтения", t)
             elif ied.get("manufacturer") == "SIEMENS":
                 intAddr = extref.attrib['intAddr']
                 ln = extref.getparent().getparent()
@@ -155,6 +168,8 @@ def make_xl(cids, path):
                     if doi.attrib["name"] in intAddr:
                         ws.cell(VERT, horiz).value = doi.attrib["desc"]
                         break
+            elif ied.get("manufacturer") == "RELEMATIKA":
+                ws.cell(VERT, horiz).value = extref.attrib["desc"]
             ws.cell(VERT, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
             letter = ws.cell(VERT, horiz).column_letter # получаем букву текущей ячейки чтобы изменить ее ширину
             ws.column_dimensions[letter].width = 3 # меняем ширину текущего столбца
@@ -162,7 +177,8 @@ def make_xl(cids, path):
             horiz += 1
         if end_group:
             ws.column_dimensions.group(start_group, end_group, hidden=True)
-        ws.cell(vert, HORIZ).value = t
+        #ip = terminal.find(f".//{COMMUNICATION}//{CONNECTEDAP}[@iedName='{t}']/{ADDRESS}/{P}[@type='IP']").text
+        ws.cell(vert, HORIZ).value = t_ied
         #ws.cell(vert, HORIZ - 2).value = t.communication["IP"] 
         vert += 1
         start_group = vert
@@ -170,6 +186,11 @@ def make_xl(cids, path):
         for gse in terminal.findall(f".//{COMMUNICATION}//{CONNECTEDAP}[@iedName='{t}']/{GSE}"): # прохожу по всем исходящим гусям
             cbName = gse.get("cbName") # получаю cbName чтобы потом найти нужный datSet
             ldInst = gse.get("ldInst") # получаю ldInst чтобы потом найти нужный datSet
+            gse_address_p = "" # параметры гуся для добавления инфы в excell
+            minTime = gse.find(f"./{MINTIME}").text
+            maxTime = gse.find(f"./{MAXTIME}").text
+            for p in gse.findall(f"./{ADDRESS}/{P}"):
+                gse_address_p += f"\n{p.attrib['type']}={p.text}"
             # print("cbName =", cbName)
             datSet = terminal.find(f".//{IED}[@name='{t}']//{ACCESSPOINT}//{SERVER}//{LDEVICE}[@inst='{ldInst}']/{LN0}/{GSECONTROL}[@name='{cbName}']").get("datSet") # получил имя DataSet с набором данных гуся
             # print("datSet =", datSet)
@@ -177,11 +198,11 @@ def make_xl(cids, path):
             end_group = vert
             for fcda in terminal.findall(f".//{IED}[@name='{t}']/{ACCESSPOINT}/{SERVER}/{LDEVICE}[@inst='{ldInst}']/{LN0}/{DATASET}[@name='{datSet}']/{FCDA}"): # бегу по исходящим сигналам гуся
                 # print(fcda.attrib)
-                ws.cell(vert, HORIZ-HORIZ_IED_NAME).value = t
+                ws.cell(vert, HORIZ-HORIZ_IED_NAME).value = t_ied
                 prefix_fcda = fcda.get("prefix", "")
                 lnInst = fcda.get("lnInst", "")
                 ws.cell(vert, HORIZ-1).value = f"{t}/{fcda.attrib['ldInst']}/{prefix_fcda}{fcda.attrib['lnClass']}{lnInst}/{fcda.attrib['doName']}/{fcda.attrib['daName']}"
-                ws.cell(vert, HORIZ-HORIZ_DATA_SET).value = f"{ldInst} {cbName} ({datSet})"
+                ws.cell(vert, HORIZ-HORIZ_DATA_SET).value = f"{t_ip} \nldInst={ldInst}, cbName={cbName} (datSet={datSet})" + gse_address_p + f"\nminTime = {minTime}, maxTime = {maxTime}"
                 ws.cell(vert, HORIZ-HORIZ_DATA_SET).alignment = STYLE
                 doName = fcda.attrib["doName"]
                 cipa_name_signal = terminal.find(f".//{IED}[@name='{t}']//{LDEVICE}[@inst='{fcda.get('ldInst')}']/{LN}[@prefix='{fcda.get('prefix')}'][@lnClass='{fcda.get('lnClass')}'][@inst='{fcda.get('lnInst')}']/{DOI}[@name='{doName}']") # нахожу узел на который подписан [@doName='{doName}']
@@ -192,7 +213,7 @@ def make_xl(cids, path):
                 try:
                     desc_in_DOI = cipa_name_signal.get("desc")
                 except:
-                    desc_in_DOI = "Рухнули на строчке 351"
+                    desc_in_DOI = "Нет описания в cid"
                 if desc_in_DOI:
                     ws.cell(vert, HORIZ).value = desc_in_DOI
                 else:
@@ -244,43 +265,51 @@ def fill_xl(file_xl):
     ws = wb.active
     empty_vertical = [True] * (ws.max_row + 1)
     empty_horizontal = [True] * (ws.max_column + 1)
+    max_column = ws.max_column
     horiz = HORIZ + 1 # первый столбец для заполнения пересечений
     vert = VERT + 1# первая строка для заполнения пересечений
     terminal_suppression = {} # ключи - названия терминалов записанные друг за друном, значения - адрес ячейки где терминалы пересекаются    
-    border_color = 'C0C0C0' # Задаем цвет границ    
-    cell_color = 'D3D3D3' # Задаем цвет границ    
-    border_side = Side(style='thin', color=border_color)  # Создаем объект Side с нужным цветом    
-    border = Border(left=border_side, right=border_side, top=border_side, bottom=border_side) # Создаем объект Border с нужными границами
+    BORDER_COLOR = 'C0C0C0' # Задаем цвет границ    
+    CELL_COLOR = 'D3D3D3' # Задаем цвет границ    
+    BORDER_SIDE = Side(style='thin', color=BORDER_COLOR)  # Создаем объект Side с нужным цветом    
+    BORDER = Border(left=BORDER_SIDE, right=BORDER_SIDE, top=BORDER_SIDE, bottom=BORDER_SIDE) # Создаем объект Border с нужными границами
+    print("...10...20...30...40...50...60...70...80...90..100%")
+    PROTC = 2
     for x in range(horiz, ws.max_column + 1):
+        if x / max_column * 100 >= PROTC:
+            print("-", end="")
+            sys.stdout.flush()
+            PROTC += 2
         for y in range(vert, ws.max_row + 1):
-            ws.cell(y, x).border = border
+            ws.cell(y, x).border = BORDER
             if ws.cell(y, HORIZ - 1).value == None:
-                ws.cell(y, x).fill = PatternFill('solid', fgColor=cell_color)
+                ws.cell(y, x).fill = PatternFill('solid', fgColor=CELL_COLOR)
             if ws.cell(VERT - 1, x).value == None:
-                ws.cell(y, x).fill = PatternFill('solid', fgColor=cell_color)
+                ws.cell(y, x).fill = PatternFill('solid', fgColor=CELL_COLOR)
                 if ws.cell(y, HORIZ - 1).value == None:
                     # ws.cell(y, x).value = 'X'
                     terminal_suppression[ws.cell(VERT, x).value + ws.cell(y, HORIZ).value] = ws.cell(y, x)
                     continue
-            if ws.cell(y, HORIZ - 1).value == ws.cell(VERT - 1, x).value:
+            #print("VERT =", ws.cell(y, HORIZ - 1).value, "HORIZ =", ws.cell(VERT - VERT_DATA_SET, x).value)    
+            if ws.cell(y, HORIZ - 1).value == ws.cell(VERT - VERT_DATA_SET, x).value:
                 ws.cell(y, x).value = 'x'
-                row = terminal_suppression[ws.cell(VERT - 2, x).value + ws.cell(y, HORIZ - HORIZ_IED_NAME).value].row
-                column = terminal_suppression[ws.cell(VERT - 2, x).value + ws.cell(y, HORIZ - HORIZ_IED_NAME).value].column
+                row = terminal_suppression[ws.cell(VERT - VERT_IED_NAME, x).value + ws.cell(y, HORIZ - HORIZ_IED_NAME).value].row
+                column = terminal_suppression[ws.cell(VERT - VERT_IED_NAME, x).value + ws.cell(y, HORIZ - HORIZ_IED_NAME).value].column
                 #terminal_suppression[ws.cell(VERT - 2, x).value + ws.cell(y, HORIZ - 2).value].value = 'X'
                 ws.cell(row, column).value = 'X'
                 ws.cell(row, x).value = '->'
                 ws.cell(row, x).alignment = openpyxl.styles.Alignment(textRotation=180)
                 ws.cell(y, column).value = '->'
 
-                ws.cell(row, HORIZ).fill = PatternFill('solid', fgColor=cell_color)
-                ws.cell(VERT, column).fill = PatternFill('solid', fgColor=cell_color)
+                ws.cell(row, HORIZ).fill = PatternFill('solid', fgColor=CELL_COLOR)
+                ws.cell(VERT, column).fill = PatternFill('solid', fgColor=CELL_COLOR)
                 
                 continue
     # ws.delete_cols(1)
     # ws.columns.pop(1)
     wb.save(file_xl)
     e_t_fill_xl = time.time()
-    print("end", "fill_xl", f"time={e_t_fill_xl - s_t_fill_xl}")
+    print("\nend", "fill_xl", f"time={e_t_fill_xl - s_t_fill_xl}")
     
     #return empty_vertical, empty_horizontal
 
@@ -339,7 +368,6 @@ def make_substation(cids: Path):
                 
                 try:
                     tree = ET.parse(cids.parent/file)
-                    # print("\n Читаем ",file)
                     root = tree.getroot()
                     ied_name = root.find(IED).attrib["name"] # получаю IED файла с которым работаю
                     # на этом месте нужно описась входящие и исходящие сигналы
