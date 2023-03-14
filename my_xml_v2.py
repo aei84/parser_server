@@ -44,9 +44,12 @@ EXTREF = "{http://www.iec.ch/61850/2003/SCL}ExtRef"
 
 CIPA = "{http://www.iec.ch/61850/2003/SCL}CIPA"
 
-HORIZ = 4 # координаты начала заполнения EXCEL
+HORIZ = 6 # координаты начала заполнения EXCEL
 VERT = 4 # координаты начала заполнения EXCEL
-HORIZ_IED_NAME = 3
+HORIZ_IED_NAME = 5
+HORIZ_APPID = 4
+HORIZ_INDS = 1
+HORIZ_INFO_GOOSE = 3
 HORIZ_DATA_SET = 2
 VERT_IED_NAME = 3
 VERT_DATA_SET = 2
@@ -119,7 +122,7 @@ def make_xl(cids, path):
     vert = VERT + 1 # первая строка для заполнения вертикали терминалов
     STYLE = Alignment(horizontal=None, vertical="center")
     for t in cids:
-        # print("t =", t)
+        print("t =", t)
         terminal = ET.parse(path.parent/f"{t}.cid").getroot()
         t_ied = t
         t_ip = terminal.find(f".//{COMMUNICATION}//{CONNECTEDAP}[@iedName='{t}']/{ADDRESS}/{P}[@type='IP']").text
@@ -148,7 +151,8 @@ def make_xl(cids, path):
             ws.cell(VERT-VERT_IED_NAME, horiz).value = t_ied #f"{extref.attrib['iedName']}"
             ws.cell(VERT-VERT_IED_NAME, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
             prefix_extref = extref.get('prefix', "")
-            ws.cell(VERT-VERT_DATA_SET, horiz).value = f"{extref.attrib['iedName']}/{extref.attrib['ldInst']}/{prefix_extref}{extref.attrib['lnClass']}{extref.attrib['lnInst']}/{extref.attrib['doName']}/{extref.attrib['daName']}"
+            daName = extref.get('daName', "")
+            ws.cell(VERT-VERT_DATA_SET, horiz).value = f"{extref.attrib['iedName']}/{extref.attrib['ldInst']}/{prefix_extref}{extref.attrib['lnClass']}{extref.attrib['lnInst']}/{extref.attrib['doName']}/{daName}"
             ws.cell(VERT-VERT_DATA_SET, horiz).alignment = openpyxl.styles.Alignment(textRotation=90)
             ws.cell(VERT, horiz).value = f"{extref.attrib['intAddr']}"
             ied = terminal.find(f".//{IED}")
@@ -183,29 +187,48 @@ def make_xl(cids, path):
         vert += 1
         start_group = vert
         end_group = None
+        # end_group = vert
         for gse in terminal.findall(f".//{COMMUNICATION}//{CONNECTEDAP}[@iedName='{t}']/{GSE}"): # прохожу по всем исходящим гусям
             cbName = gse.get("cbName") # получаю cbName чтобы потом найти нужный datSet
             ldInst = gse.get("ldInst") # получаю ldInst чтобы потом найти нужный datSet
             gse_address_p = "" # параметры гуся для добавления инфы в excell
-            minTime = gse.find(f"./{MINTIME}").text
-            maxTime = gse.find(f"./{MAXTIME}").text
-            for p in gse.findall(f"./{ADDRESS}/{P}"):
+            try:
+                minTime = gse.find(f"./{MINTIME}").text
+                maxTime = gse.find(f"./{MAXTIME}").text
+            except:
+                minTime = "В сиде нет"
+                maxTime = "В сиде нет"
+            p_param = gse.findall(f"./{ADDRESS}/{P}")
+            for p in p_param:
                 gse_address_p += f"\n{p.attrib['type']}={p.text}"
             # print("cbName =", cbName)
             datSet = terminal.find(f".//{IED}[@name='{t}']//{ACCESSPOINT}//{SERVER}//{LDEVICE}[@inst='{ldInst}']/{LN0}/{GSECONTROL}[@name='{cbName}']").get("datSet") # получил имя DataSet с набором данных гуся
             # print("datSet =", datSet)
             data_set_start = vert
-            end_group = vert
+            data_set_end = None
+            #end_group = vert
+            n_ind = 0
+            last_dataset = ""
             for fcda in terminal.findall(f".//{IED}[@name='{t}']/{ACCESSPOINT}/{SERVER}/{LDEVICE}[@inst='{ldInst}']/{LN0}/{DATASET}[@name='{datSet}']/{FCDA}"): # бегу по исходящим сигналам гуся
                 # print(fcda.attrib)
                 ws.cell(vert, HORIZ-HORIZ_IED_NAME).value = t_ied
                 prefix_fcda = fcda.get("prefix", "")
                 lnInst = fcda.get("lnInst", "")
-                ws.cell(vert, HORIZ-1).value = f"{t}/{fcda.attrib['ldInst']}/{prefix_fcda}{fcda.attrib['lnClass']}{lnInst}/{fcda.attrib['doName']}/{fcda.attrib['daName']}"
-                ws.cell(vert, HORIZ-HORIZ_DATA_SET).value = f"{t_ip} \nldInst={ldInst}, cbName={cbName} (datSet={datSet})" + gse_address_p + f"\nminTime = {minTime}, maxTime = {maxTime}"
-                ws.cell(vert, HORIZ-HORIZ_DATA_SET).alignment = STYLE
+                daName_fcda = fcda.get("daName", "")
+                dataset = f"{t}/{fcda.attrib['ldInst']}/{prefix_fcda}{fcda.attrib['lnClass']}{lnInst}/{fcda.attrib['doName']}"
+                ws.cell(vert, HORIZ-HORIZ_DATA_SET).value = f"{dataset}/{daName_fcda}"
+                ws.cell(vert, HORIZ-HORIZ_INFO_GOOSE).value = f"{t_ip} \nldInst={ldInst}, cbName={cbName} (datSet={datSet})" + gse_address_p + f"\nminTime = {minTime}, maxTime = {maxTime}"               
+                ws.cell(vert, HORIZ-HORIZ_INFO_GOOSE).alignment = STYLE
+                ws.cell(vert, HORIZ-HORIZ_APPID).value = gse.find(f"./{ADDRESS}/{P}[@type='APPID']").text
                 doName = fcda.attrib["doName"]
-                cipa_name_signal = terminal.find(f".//{IED}[@name='{t}']//{LDEVICE}[@inst='{fcda.get('ldInst')}']/{LN}[@prefix='{fcda.get('prefix')}'][@lnClass='{fcda.get('lnClass')}'][@inst='{fcda.get('lnInst')}']/{DOI}[@name='{doName}']") # нахожу узел на который подписан [@doName='{doName}']
+                if fcda.get("prefix"):
+                    cipa_name_signal = terminal.find(f".//{IED}[@name='{t}']//{LDEVICE}[@inst='{fcda.get('ldInst')}']/{LN}[@prefix='{fcda.get('prefix')}'][@lnClass='{fcda.get('lnClass')}'][@inst='{fcda.get('lnInst')}']/{DOI}[@name='{doName}']") # нахожу узел на который подписан [@doName='{doName}']
+                else:
+                    cipa_name_signal = terminal.find(f".//{IED}[@name='{t}']//{LDEVICE}[@inst='{fcda.get('ldInst')}']/{LN}[@lnClass='{fcda.get('lnClass')}'][@inst='{fcda.get('lnInst')}']/{DOI}[@name='{doName}']") # нахожу узел на который подписан [@doName='{doName}']
+                if last_dataset != dataset:
+                    n_ind += 1
+                    last_dataset = dataset
+                    ws.cell(vert, HORIZ-HORIZ_INDS).value = n_ind
                 #print(test1, test2, cipa_name_signal.attrib)
                 #cipa = ET.Element(CIPA)
                 #cipa.attrib["IED"] = ied_name
@@ -233,9 +256,12 @@ def make_xl(cids, path):
                 # ws.cell(vert, HORIZ - 2).value = t.signal_names.get(int(signal), "В ЭКРАвских сидах не найти, бери мануал(((")
                 
                 end_group = vert
+                data_set_end = vert
                 vert += 1
+                
             #print(t)
-            ws.merge_cells(range_string=None, start_row=data_set_start, start_column=HORIZ-HORIZ_DATA_SET, end_row=end_group, end_column=HORIZ-HORIZ_DATA_SET) # объеденяем ячейки
+            if data_set_end:
+                ws.merge_cells(range_string=None, start_row=data_set_start, start_column=HORIZ-HORIZ_INFO_GOOSE, end_row=data_set_end, end_column=HORIZ-HORIZ_INFO_GOOSE) # объеденяем ячейки
         # for ind, signal in t.goose_out_data.items():
         #     ws.cell(vert, HORIZ).value = "ind_" + str(ind)
         #     ws.cell(vert, HORIZ - 1).value = signal
@@ -244,19 +270,26 @@ def make_xl(cids, path):
         #     vert += 1
         if end_group:
             ws.row_dimensions.group(start_group, end_group, hidden=True) 
-    ws.column_dimensions.group('B', ws.cell(VERT, HORIZ - 1).column_letter, hidden=True)
+    #ws.column_dimensions.group('C', ws.cell(VERT, HORIZ - 1).column_letter, hidden=True)
     ws.row_dimensions.group(1, VERT - 1, hidden=True)
-    ws.column_dimensions[ws.cell(VERT, HORIZ - HORIZ_IED_NAME).column_letter].width = 22
-    ws.column_dimensions[ws.cell(VERT, HORIZ - 1).column_letter].width = 5
-    ws.column_dimensions[ws.cell(VERT, HORIZ).column_letter].width = 20
+    # ws.column_dimensions[ws.cell(VERT, HORIZ - HORIZ_IED_NAME).column_letter].width = 22
+    # ws.column_dimensions[ws.cell(VERT, HORIZ - 1).column_letter].width = 5
+    # ws.column_dimensions[ws.cell(VERT, HORIZ).column_letter].width = 20
+    ws.column_dimensions["C"].width = 10
+    ws.column_dimensions["D"].width = 20
+    ws.column_dimensions["E"].width = 5
+    ws.column_dimensions.group('C', ws.cell(VERT, HORIZ - 1).column_letter)
+    ws.column_dimensions["A"].width = 0.2
+    ws.column_dimensions["B"].width = 0.2
+    ws.row_dimensions[1].height = 0.2
     ws.row_dimensions[VERT].height = 100
     ws.row_dimensions[VERT - 2].height = 110
     ws.freeze_panes = ws.cell(VERT + 1, HORIZ + 1)
-    wb.save(path.parent/"For_Sancho.xlsx")
+    wb.save(path.parent/"FS.xlsx")
     e_t_make_xl = time.time()
     print("end", "make_xl", f"time={e_t_make_xl - s_t_make_xl}")
-    fill_xl(path.parent/"For_Sancho.xlsx")
-    #to_vasiliy_xl(path.parent/"For_Sancho.xlsx", "vas.xlsx")
+    fill_xl(path.parent/"FS.xlsx")
+    #to_vasiliy_xl(path.parent/"FS.xlsx", "vas.xlsx")
 
 def fill_xl(file_xl):
     s_t_fill_xl = time.time()
@@ -282,16 +315,16 @@ def fill_xl(file_xl):
             PROTC += 2
         for y in range(vert, ws.max_row + 1):
             ws.cell(y, x).border = BORDER
-            if ws.cell(y, HORIZ - 1).value == None:
+            if ws.cell(y, HORIZ - HORIZ_DATA_SET).value == None:
                 ws.cell(y, x).fill = PatternFill('solid', fgColor=CELL_COLOR)
-            if ws.cell(VERT - 1, x).value == None:
+            if ws.cell(VERT - VERT_INDS, x).value == None:
                 ws.cell(y, x).fill = PatternFill('solid', fgColor=CELL_COLOR)
-                if ws.cell(y, HORIZ - 1).value == None:
+                if ws.cell(y, HORIZ - HORIZ_DATA_SET).value == None:
                     # ws.cell(y, x).value = 'X'
                     terminal_suppression[ws.cell(VERT, x).value + ws.cell(y, HORIZ).value] = ws.cell(y, x)
                     continue
-            #print("VERT =", ws.cell(y, HORIZ - 1).value, "HORIZ =", ws.cell(VERT - VERT_DATA_SET, x).value)    
-            if ws.cell(y, HORIZ - 1).value == ws.cell(VERT - VERT_DATA_SET, x).value:
+            #print("VERT =", ws.cell(y, HORIZ - HORIZ_DATA_SET).value, "HORIZ =", ws.cell(VERT - VERT_DATA_SET, x).value)    
+            if ws.cell(y, HORIZ - HORIZ_DATA_SET).value == ws.cell(VERT - VERT_DATA_SET, x).value:
                 ws.cell(y, x).value = 'x'
                 row = terminal_suppression[ws.cell(VERT - VERT_IED_NAME, x).value + ws.cell(y, HORIZ - HORIZ_IED_NAME).value].row
                 column = terminal_suppression[ws.cell(VERT - VERT_IED_NAME, x).value + ws.cell(y, HORIZ - HORIZ_IED_NAME).value].column
@@ -403,7 +436,7 @@ def make_substation(cids: Path):
         #     zip_file.write(cids.parent/("c_" + k), (k + ".cid"))
         report_cipa.make_report(cids.parent)
         zip_file.write(cids.parent/("report_cipa.txt"), ("report_cipa.txt"))
-        zip_file.write(cids.parent/"For_Sancho.xlsx", "For_Sancho.xlsx")
+        zip_file.write(cids.parent/"FS.xlsx", "FS.xlsx")
     e_t_make_substation = time.time()
     print("end", "make_substation", f"time={e_t_make_substation - s_t_make_substation}")
 
